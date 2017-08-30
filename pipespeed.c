@@ -11,7 +11,7 @@ void assert(int x, int n) {
   }
 }
 
-const int BYTES = 2 * 1000 * 1000;
+const int BYTES = 100 * 1000 * 1000;
 const int BUFSIZE = 4096;
 
 #define min(x,y) (((x)<(y))?(x):(y))
@@ -25,17 +25,7 @@ void *malloc_pagealigned(int s) {
 }
 
 int main(void) {
-
-  int t1 = uptime();
-  for (int i=0; i<20; ++i) {
-    sleep(20);
-    int t2 = uptime();
-    int diff = t2 - t1;
-    t1 = t2;
-    printf(1, "diff = %d\n", diff);
-  }
-
-
+  int start = uptime();
   int pipefd[2];
   int res = pipe(pipefd);
   assert(res == 0, 6);
@@ -71,6 +61,8 @@ int main(void) {
     }
     printf(1, "parent process read %d bytes\n", nread);
     close(pipefd[0]);
+    int stop = uptime();
+    printf(1, "ticks elapsed = %d\n", stop - start);
     wait();
   }
   return 0;
