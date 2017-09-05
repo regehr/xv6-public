@@ -10,6 +10,7 @@
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
+  struct proc *readyhead, *readytail;
 } ptable;
 
 static struct proc *initproc;
@@ -24,6 +25,7 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  ptable.readyhead = ptable.readytail = 0;
 }
 
 // Must be called with interrupts disabled
@@ -115,6 +117,18 @@ found:
   return p;
 }
 
+// must be called with ptable locked
+void make_runnable(struct proc *p)
+{
+  p->state = RUNNABLE;
+  p->readynext = 0;
+  if (ptable.readytail)
+    ptable.readytail->readynext = p;
+  ptable.readytail = p;
+  if (!ptable.readyhead)
+    ptable.readyhead = p;
+}
+
 //PAGEBREAK: 32
 // Set up first user process.
 void
@@ -124,7 +138,7 @@ userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   p = allocproc();
-  
+
   initproc = p;
   if((p->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
@@ -148,7 +162,7 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
-  p->state = RUNNABLE;
+  make_runnable(p);
 
   release(&ptable.lock);
 }
@@ -214,7 +228,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
-  np->state = RUNNABLE;
+  make_runnable(np);
 
   release(&ptable.lock);
 
@@ -322,19 +336,22 @@ wait(void)
 void
 scheduler(void)
 {
-  struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+
+    struct proc *p = ptable.readyhead;
+    if (p) {
+
+      ptable.readyhead = p->readynext;
+      if (!ptable.readyhead)
+        ptable.readytail = 0;
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
@@ -386,7 +403,7 @@ void
 yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
-  myproc()->state = RUNNABLE;
+  make_runnable(myproc());
   sched();
   release(&ptable.lock);
 }
@@ -461,7 +478,7 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+      make_runnable(p);
 }
 
 // Wake up all processes sleeping on chan.
@@ -487,7 +504,7 @@ kill(int pid)
       p->killed = 1;
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
-        p->state = RUNNABLE;
+        make_runnable(p);
       release(&ptable.lock);
       return 0;
     }
