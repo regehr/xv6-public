@@ -20,7 +20,7 @@ unsigned xorshift32(unsigned *state) {
   return x;
 }
 
-const int N = 20 * 1000 * 1000;
+const int N = 1 * 1000 * 1000;
 #define B 4096
 
 unsigned size_state;
@@ -50,8 +50,6 @@ int main(void) {
     do {
       int l = randlen();
       z = read(pipefd[0], buf, l);
-      //if (l != z)
-      //printf(1, "short read %d\n", z);
       assert(z >= 0);
       for (int i = 0; i < z; ++i)
         assert(buf[i] == (char)xorshift32(&stream_state));
@@ -73,8 +71,6 @@ int main(void) {
       w += z;
     }
     printf(1, "parent process wrote %d bytes\n", w);
-    wait();
   }
-  exit();
   return 0;
 }
