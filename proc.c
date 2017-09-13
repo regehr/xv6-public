@@ -7,6 +7,101 @@
 #include "proc.h"
 #include "spinlock.h"
 
+#define NMUTEXES 32
+
+struct {
+  struct spinlock lock;
+  // -1 = unallocated
+  //  0 = allocated, not acquired
+  //  1 = allocated, acquired
+  int state[NMUTEXES];
+  int pid[NMUTEXES];
+} mutexes;
+
+int sys_mutex_create(void) {
+  acquire(&mutexes.lock);
+  for (int i=0; i<NMUTEXES; ++i) {
+    if (mutexes.state[i] == -1) {
+      mutexes.state[i] = 0;
+      mutexes.pid[i] = 0;
+      release(&mutexes.lock);
+      return i;
+    }
+  }
+  release(&mutexes.lock);
+  return -1;
+}
+
+int sys_mutex_acquire(void) {
+  int mutex;
+  if(argint(0, &mutex) < 0)
+    return -1;
+  acquire(&mutexes.lock);
+  if (mutexes.state[mutex] == -1) {
+    cprintf("wah, %d tried to acquire unallocated mutex\n", myproc()->pid);
+    release(&mutexes.lock);
+    return -1;
+  }
+  if (mutexes.state[mutex] != 0 &&
+      mutexes.state[mutex] != 1)
+    panic("mutex corruption in acquire");
+  while (mutexes.state[mutex] == 1)
+    sleep(&mutexes.state[mutex], &mutexes.lock);
+  // FIXME -- handle the case where the mutex gets destroyed
+  mutexes.state[mutex] = 1;
+  mutexes.pid[mutex] = myproc()->pid;
+  release(&mutexes.lock);
+  return 0;
+}
+
+int sys_mutex_release(void) {
+  int mutex;
+  if(argint(0, &mutex) < 0)
+    return -1;
+  acquire(&mutexes.lock);
+  if (mutexes.state[mutex] == -1) {
+    cprintf("wah, %d tried to release unallocated mutex\n", myproc()->pid);
+    release(&mutexes.lock);
+    return -1;
+  }
+  if (mutexes.state[mutex] != 0 &&
+      mutexes.state[mutex] != 1)
+    panic("mutex corruption in release");
+  if (!(mutexes.state[mutex] == 1 && mutexes.pid[mutex] == myproc()->pid)) {
+    cprintf("wah, %d tried to release mutex it doesn't hold\n", myproc()->pid);
+    release(&mutexes.lock);
+    return -1;
+  }
+  mutexes.state[mutex] = 0;
+  wakeup(&mutexes.state[mutex]);
+  release(&mutexes.lock);
+  return 0;
+}
+
+int sys_mutex_destroy(void) {
+  int mutex;
+  if(argint(0, &mutex) < 0)
+    return -1;
+  acquire(&mutexes.lock);
+  if (mutexes.state[mutex] == -1) {
+    cprintf("wah, %d tried to destroy unallocated mutex\n", myproc()->pid);
+    release(&mutexes.lock);
+    return -1;
+  }
+  if (mutexes.state[mutex] != 0 &&
+      mutexes.state[mutex] != 1)
+    panic("mutex corruption in destroy");
+  if (mutexes.state[mutex] == 1) {
+    cprintf("wah, %d can't destroy a mutex that someone holds\n", myproc()->pid);
+    release(&mutexes.lock);
+    return -1;
+  }
+  wakeup(&mutexes.state[mutex]);
+  mutexes.state[mutex] = -1;
+  release(&mutexes.lock);
+  return 0;
+}
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -24,6 +119,9 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  initlock(&mutexes.lock, "mutexes");
+  for (int i=0; i<NMUTEXES; ++i)
+    mutexes.state[i] = -1;
 }
 
 // Must be called with interrupts disabled
